@@ -1,0 +1,23 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / frontend (used once Person D adds the dashboard)
+node_modules/
+dist/
+.vite/
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Docker
+pgdata/
