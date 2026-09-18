@@ -28,7 +28,7 @@ def github_graphql(query: str):
         method="POST",
     )
 
-    with urllib.request.urlopen(request) as response:
+    with urllib.request.urlopen(request, timeout=30) as response:
         result = json.loads(response.read().decode("utf-8"))
 
     if "errors" in result:
