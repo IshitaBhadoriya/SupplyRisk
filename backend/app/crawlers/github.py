@@ -10,7 +10,7 @@ GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
 
 
 def github_graphql(query: str):
-    """Send a GraphQL query to GitHub."""
+    """Send a GraphQL query to GitHub with retry handling."""
 
     token = os.getenv("GITHUB_TOKEN")
 
@@ -28,13 +28,31 @@ def github_graphql(query: str):
         method="POST",
     )
 
-    with urllib.request.urlopen(request) as response:
-        result = json.loads(response.read().decode("utf-8"))
+    max_retries = 3
 
-    if "errors" in result:
-        raise RuntimeError(f"GitHub GraphQL error: {result['errors']}")
+    for attempt in range(1, max_retries + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                result = json.loads(response.read().decode("utf-8"))
 
-    return result["data"]
+            if "errors" in result:
+                raise RuntimeError(
+                    f"GitHub GraphQL error: {result['errors']}"
+                )
+
+            return result["data"]
+
+        except Exception as exc:
+            if attempt == max_retries:
+                raise
+
+            print(
+                f"GitHub request failed "
+                f"(attempt {attempt}/{max_retries}): {exc}"
+            )
+
+            import time
+            time.sleep(2 ** attempt)
 
 
 def get_repository(owner: str, name: str):
