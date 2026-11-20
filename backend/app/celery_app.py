@@ -6,6 +6,14 @@ beat_schedule = {
         "task": "app.tasks.run_github_ingestion",
         "schedule": crontab(hour=2, minute=0),
     },
+    "nightly-osv-ingestion": {
+        "task": "app.tasks.run_osv_ingestion",
+        "schedule": crontab(hour=3, minute=0),
+    },
+    "nightly-dependency-ingestion": {
+        "task": "app.tasks.run_dependency_ingestion",
+        "schedule": crontab(hour=4, minute=0),
+    },
 }
 celery_app = Celery(
     "supplyrisk",
