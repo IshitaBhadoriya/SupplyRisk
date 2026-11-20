@@ -1,5 +1,42 @@
+import json
 import time
 from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+
+LOG_DIR = Path("/app/logs")
+FAILED_REPOSITORIES_LOG = LOG_DIR / "github_failed_repositories.json"
+
+
+def save_failed_repository(
+    owner: str,
+    repository: str,
+    error: str,
+) -> None:
+    """Persist a failed GitHub repository for later inspection."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    if FAILED_REPOSITORIES_LOG.exists():
+        try:
+            failures = json.loads(
+                FAILED_REPOSITORIES_LOG.read_text()
+            )
+        except json.JSONDecodeError:
+            failures = []
+    else:
+        failures = []
+
+    failures.append(
+        {
+            "repository": f"{owner}/{repository}",
+            "error": str(error),
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
+
+    FAILED_REPOSITORIES_LOG.write_text(
+        json.dumps(failures, indent=2)
+    )
 
 from app.crawlers.github import (
     get_all_commits,
@@ -94,6 +131,11 @@ def crawl_repository(owner: str, repository: str, packages: list[Package]):
 
 def bulk_github_ingestion() -> None:
     """Crawl each unique GitHub repository once, then retry failures."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    if FAILED_REPOSITORIES_LOG.exists():
+        FAILED_REPOSITORIES_LOG.unlink()
+    FAILED_REPOSITORIES_LOG.write_text("[]")
     print("=" * 60)
     print("SUPPLYRISK BULK GITHUB INGESTION")
     print("=" * 60)
@@ -124,6 +166,12 @@ def bulk_github_ingestion() -> None:
             failed += 1
             failed_repositories.append(
                 (owner, repository, linked_packages)
+            )
+
+            save_failed_repository(
+                owner,
+                repository,
+                str(exc),
             )
 
             print(
