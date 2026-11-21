@@ -1,6 +1,7 @@
 import os
 import json
 import urllib.request
+import time
 from datetime import datetime
 from app.models import Contributor
 from app.database import SessionLocal
@@ -33,7 +34,23 @@ def github_graphql(query: str):
     for attempt in range(1, max_retries + 1):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
+                remaining = response.headers.get("X-RateLimit-Remaining")
+                reset_at = response.headers.get("X-RateLimit-Reset")
                 result = json.loads(response.read().decode("utf-8"))
+
+            if remaining is not None and int(remaining) == 0:
+                wait_seconds = max(
+                    0,
+                    int(reset_at) - int(time.time())
+                ) if reset_at else 60
+
+                print(
+                    f"GitHub rate limit reached. "
+                    f"Waiting {wait_seconds} seconds until reset."
+                )
+
+                time.sleep(wait_seconds)
+                continue
 
             if "errors" in result:
                 raise RuntimeError(
@@ -51,7 +68,6 @@ def github_graphql(query: str):
                 f"(attempt {attempt}/{max_retries}): {exc}"
             )
 
-            import time
             time.sleep(2 ** attempt)
 
 
