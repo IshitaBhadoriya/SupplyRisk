@@ -1,4 +1,5 @@
 import httpx
+from packaging.requirements import Requirement, InvalidRequirement
 
 from app.database import SessionLocal
 from app.models import Package, DependencyEdge
@@ -46,9 +47,10 @@ def get_dependencies(registry: str, package_name: str) -> list[str]:
         dependencies = []
 
         for requirement in requires_dist:
-            dependency_name = requirement.split(";")[0]
-            dependency_name = dependency_name.split("[")[0]
-            dependency_name = dependency_name.strip()
+            try:
+                dependency_name = Requirement(requirement).name
+            except InvalidRequirement:
+                continue
 
             if dependency_name:
                 dependencies.append(dependency_name)
@@ -106,6 +108,7 @@ def save_dependency_edges(
 
         saved = 0
         skipped = 0
+        resolved_dependency_ids = set()
 
         for dependency_name in dependency_names:
             dependency = find_package(
@@ -121,7 +124,9 @@ def save_dependency_edges(
             if dependency.id == package_id:
                 skipped += 1
                 continue
-
+            if dependency.id in resolved_dependency_ids:
+                skipped += 1
+                continue
             existing = (
                 db.query(DependencyEdge)
                 .filter(
@@ -141,6 +146,7 @@ def save_dependency_edges(
             )
 
             db.add(edge)
+            resolved_dependency_ids.add(dependency.id)
             saved += 1
 
         db.commit()
