@@ -208,6 +208,12 @@ def bulk_github_ingestion() -> None:
             except Exception as exc:
                 retry_failed += 1
 
+                save_failed_repository(
+                    owner,
+                    repository,
+                    f"Retry failed: {exc}",
+                )
+
                 print(
                     f"[RETRY FAILED] "
                     f"{owner}/{repository}: {exc}"
