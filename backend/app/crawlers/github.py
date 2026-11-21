@@ -2,7 +2,7 @@ import os
 import json
 import urllib.request
 import time
-from datetime import datetime
+from datetime import datetime, UTC
 from app.models import Contributor
 from app.database import SessionLocal
 from app.models import Package
@@ -223,7 +223,7 @@ def get_or_create_package(registry: str, name: str, repo_url: str = None) -> int
         db.close()
 
 def save_contributors(package_id: int, rows: list[dict]):
-    """Replace existing contributor rows for this package with fresh data."""
+    """Replace existing contributor rows and update the package crawl timestamp."""
     db = SessionLocal()
     try:
         deleted = db.query(Contributor).filter_by(package_id=package_id).delete()
@@ -232,8 +232,20 @@ def save_contributors(package_id: int, rows: list[dict]):
         for row in rows:
             db.add(Contributor(**row))
 
+        package = db.query(Package).filter_by(id=package_id).first()
+
+        if package:
+            package.last_crawled_at = datetime.now(UTC)
+
         db.commit()
+
         print(f"Inserted {len(rows)} contributor rows for package_id={package_id}")
+        print(f"Updated last_crawled_at for package_id={package_id}")
+
+    except Exception:
+        db.rollback()
+        raise
+
     finally:
         db.close()
 

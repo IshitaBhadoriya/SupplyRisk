@@ -25,6 +25,7 @@ class Package(Base):
     repo_url = Column(String, nullable=True)
     current_score = Column(Float, nullable=True)
     last_scored_at = Column(DateTime, nullable=True)
+    last_crawled_at = Column(DateTime, nullable=True)
 
     score_history = relationship("ScoreHistory", back_populates="package")
     contributors = relationship("Contributor", back_populates="package")
