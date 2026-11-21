@@ -79,16 +79,20 @@ class Advisory(Base):
 
 
 class DependencyEdge(Base):
-    """Self-referencing edge table — package_id depends on depends_on_package_id.
-    This is what makes the recursive-CTE dependency-tree query possible."""
-
+    """Self-referencing edge table — package_id depends on depends_on_package_id."""
     __tablename__ = "dependency_edges"
 
     id = Column(Integer, primary_key=True)
     package_id = Column(Integer, ForeignKey("packages.id"), nullable=False)
     depends_on_package_id = Column(Integer, ForeignKey("packages.id"), nullable=False)
 
-
+    __table_args__ = (
+        UniqueConstraint(
+            "package_id",
+            "depends_on_package_id",
+            name="uq_dependency_edge",
+        ),
+    )
 class Watchlist(Base):
     """A team's tracked packages — advanced-scope feature, table included now
     so the schema doesn't need breaking changes later."""
