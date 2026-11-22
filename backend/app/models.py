@@ -34,13 +34,21 @@ class Package(Base):
 
 
 class ScoreHistory(Base):
-    """One row per (package, time) risk score snapshot — this is what powers trend charts."""
+    """One row per (package, time) risk score snapshot — this is what powers trend charts.
+
+    Partitioned by month on scored_at (see the partition_score_history
+    migration). Postgres requires any primary key on a partitioned table
+    to include the partition key column, which is why scored_at is part
+    of the primary key here alongside id, rather than id alone. This is
+    additive, not breaking: nothing in the codebase looks up a
+    ScoreHistory row by id alone — write_score_history() only ever
+    inserts new rows."""
 
     __tablename__ = "score_history"
 
     id = Column(Integer, primary_key=True)
     package_id = Column(Integer, ForeignKey("packages.id"), nullable=False)
-    scored_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    scored_at = Column(DateTime, primary_key=True, default=datetime.utcnow, nullable=False)
     score = Column(Float, nullable=False)
     bus_factor = Column(Float, nullable=True)
     churn_rate = Column(Float, nullable=True)
@@ -93,6 +101,8 @@ class DependencyEdge(Base):
             name="uq_dependency_edge",
         ),
     )
+
+
 class Watchlist(Base):
     """A team's tracked packages — advanced-scope feature, table included now
     so the schema doesn't need breaking changes later."""
