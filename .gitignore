@@ -21,3 +21,7 @@ dist/
 
 # Docker
 pgdata/
+
+# Generated runtime logs
+backend/logs/
+ingestion-log.txt

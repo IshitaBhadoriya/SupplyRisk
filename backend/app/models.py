@@ -34,7 +34,7 @@ class Package(Base):
 
 
 class ScoreHistory(Base):
-    """One row per (package, time) risk score snapshot — this is what powers trend charts."""
+    """One row per (package, time) risk score snapshot â€” this is what powers trend charts."""
 
     __tablename__ = "score_history"
 
@@ -50,7 +50,7 @@ class ScoreHistory(Base):
 
 
 class Contributor(Base):
-    """Per-package contributor commit stats — used to compute bus factor / churn."""
+    """Per-package contributor commit stats â€” used to compute bus factor / churn."""
 
     __tablename__ = "contributors"
 
@@ -79,7 +79,7 @@ class Advisory(Base):
 
 
 class DependencyEdge(Base):
-    """Self-referencing edge table — package_id depends on depends_on_package_id."""
+    """Self-referencing edge table â€” package_id depends on depends_on_package_id."""
     __tablename__ = "dependency_edges"
 
     id = Column(Integer, primary_key=True)
@@ -93,13 +93,87 @@ class DependencyEdge(Base):
             name="uq_dependency_edge",
         ),
     )
+
 class Watchlist(Base):
-    """A team's tracked packages — advanced-scope feature, table included now
-    so the schema doesn't need breaking changes later."""
+    """Packages saved by individual users."""
 
     __tablename__ = "watchlists"
 
     id = Column(Integer, primary_key=True)
-    team_id = Column(Integer, nullable=False)
-    package_id = Column(Integer, ForeignKey("packages.id"), nullable=False)
+    team_id = Column(Integer, nullable=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    package_id = Column(
+        Integer,
+        ForeignKey("packages.id"),
+        nullable=False,
+    )
     added_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "package_id",
+            name="uq_watchlist_user_package",
+        ),
+    )
+
+
+class IngestionStatus(Base):
+    """Tracks ingestion results for each package and data source."""
+
+    __tablename__ = "ingestion_status"
+
+    id = Column(Integer, primary_key=True)
+
+    package_id = Column(
+        Integer,
+        ForeignKey("packages.id"),
+        nullable=False,
+    )
+
+    source = Column(String, nullable=False)
+    status = Column(
+        String,
+        nullable=False,
+        default="pending",
+    )
+
+    last_attempt_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    last_success_at = Column(DateTime, nullable=True)
+
+    records_found = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    error_message = Column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "package_id",
+            "source",
+            name="uq_ingestion_package_source",
+        ),
+    )
+
+class User(Base):
+    """Registered SupplyRisk users."""
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    hashed_password = Column(String, nullable=False)
+    is_active = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
