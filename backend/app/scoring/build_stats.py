@@ -18,9 +18,8 @@ What's real vs. approximated right now:
     activity. Worth raising with the team once/if commit-level dates
     become available (would need a new table or a richer crawl).
 
-  - advisory_response: correctly empty for now. B hasn't crawled OSV.dev
-    advisories yet (that's Phase 2, Weeks 7-8) -- so this returns 0 risk,
-    which is accurate given what's actually known right now, not a bug.
+  - advisory_response: real, from B's OSV.dev crawler (Phase 2). Phase 3
+    hardened this against malformed rows -- see _safe_to_date() below.
 
   - release_cadence_decay: APPROXIMATED. Uses each contributor's
     last_commit_at as one activity "event" (one point per contributor,
@@ -34,7 +33,8 @@ intended seam (see formula.py's PackageRawStats docstring).
 """
 
 from __future__ import annotations
-from datetime import date
+from datetime import date, datetime
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -69,16 +69,69 @@ def build_stats_for_package(session: Session, package: Package) -> PackageRawSta
 
 
 def _load_advisories(session: Session, package: Package) -> list[dict]:
-    """Real query, correctly returns [] until B's OSV.dev crawler (Phase 2) exists."""
+    """
+    Real query, backed by B's OSV.dev crawler (Phase 2).
+
+    Phase 3 hardening: defensively tolerant of a malformed row. OSV's API
+    returns `published`/`fixed` as strings, which osv.py stores into
+    DateTime columns -- Postgres normally casts these cleanly on insert,
+    but a single oddly-formatted or unexpected value on ONE advisory
+    shouldn't take down scoring for the WHOLE package. This is the same
+    "don't let one bad row kill the whole batch" lesson already learned
+    and fixed once in the dependency-edges crawler (Phase 2) -- applied
+    here on the read side, for the same category of risk.
+    """
     rows = session.query(Advisory).filter_by(package_id=package.id).all()
-    return [
-        {
-            "published_date": row.published_at.date(),
-            "patched_date": row.patched_at.date() if row.patched_at else None,
-        }
-        for row in rows
-        if row.published_at is not None
-    ]
+    advisories = []
+    skipped = 0
+
+    for row in rows:
+        published_date = _safe_to_date(row.published_at)
+        if published_date is None:
+            skipped += 1
+            continue
+        advisories.append(
+            {
+                "published_date": published_date,
+                "patched_date": _safe_to_date(row.patched_at),
+            }
+        )
+
+    if skipped:
+        print(
+            f"[build_stats] {package.registry}/{package.name}: "
+            f"skipped {skipped} advisory row(s) with missing or "
+            f"unparseable published_at"
+        )
+
+    return advisories
+
+
+def _safe_to_date(value) -> Optional[date]:
+    """
+    Coerces a DB value that SHOULD be a datetime into a plain date,
+    tolerating the unexpected rather than raising:
+      - None -> None (the normal "not patched yet" / "missing" case)
+      - a real datetime -> .date()
+      - a raw string that somehow made it through (defensive, shouldn't
+        normally happen since Postgres returns real datetimes on SELECT)
+        -> parsed via fromisoformat, or None if that fails
+      - anything else unexpected -> None, rather than an AttributeError
+        that would crash this package's entire scoring run
+    """
+    if value is None:
+        return None
+    if hasattr(value, "date"):
+        try:
+            return value.date()
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+    return None
 
 
 def _month_start(d: date) -> date:
