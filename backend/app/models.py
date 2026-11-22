@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 
 from sqlalchemy import (
     Column,
@@ -15,12 +15,12 @@ from app.database import Base
 
 
 class Package(Base):
-    """One row per tracked package (e.g. 'requests' on PyPI, 'lodash' on npm)."""
+    """One row per tracked package."""
 
     __tablename__ = "packages"
 
     id = Column(Integer, primary_key=True)
-    registry = Column(String, nullable=False)  # "npm" | "pypi" | "github"
+    registry = Column(String, nullable=False)
     name = Column(String, nullable=False)
     repo_url = Column(String, nullable=True)
     current_score = Column(Float, nullable=True)
@@ -31,25 +31,28 @@ class Package(Base):
     contributors = relationship("Contributor", back_populates="package")
     advisories = relationship("Advisory", back_populates="package")
 
-    __table_args__ = (UniqueConstraint("registry", "name", name="uq_registry_name"),)
+    __table_args__ = (
+        UniqueConstraint("registry", "name", name="uq_registry_name"),
+    )
 
 
 class ScoreHistory(Base):
-    """One row per (package, time) risk score snapshot — this is what powers trend charts.
+    """One row per package and time risk score snapshot.
 
-    Partitioned by month on scored_at (see the partition_score_history
-    migration). Postgres requires any primary key on a partitioned table
-    to include the partition key column, which is why scored_at is part
-    of the primary key here alongside id, rather than id alone. This is
-    additive, not breaking: nothing in the codebase looks up a
-    ScoreHistory row by id alone — write_score_history() only ever
-    inserts new rows."""
+    Partitioned by month on scored_at. PostgreSQL requires the partition
+    key to be included in the primary key.
+    """
 
     __tablename__ = "score_history"
 
     id = Column(Integer, primary_key=True)
     package_id = Column(Integer, ForeignKey("packages.id"), nullable=False)
-    scored_at = Column(DateTime, primary_key=True, default=datetime.utcnow, nullable=False)
+    scored_at = Column(
+        DateTime,
+        primary_key=True,
+        default=datetime.utcnow,
+        nullable=False,
+    )
     score = Column(Float, nullable=False)
     bus_factor = Column(Float, nullable=True)
     churn_rate = Column(Float, nullable=True)
@@ -59,7 +62,7 @@ class ScoreHistory(Base):
 
 
 class Contributor(Base):
-    """Per-package contributor commit stats — used to compute bus factor / churn."""
+    """Per-package contributor commit statistics."""
 
     __tablename__ = "contributors"
 
@@ -74,13 +77,13 @@ class Contributor(Base):
 
 
 class Advisory(Base):
-    """Known security advisories for a package, and how fast they were patched."""
+    """Known security advisories for a package."""
 
     __tablename__ = "advisories"
 
     id = Column(Integer, primary_key=True)
     package_id = Column(Integer, ForeignKey("packages.id"), nullable=False)
-    severity = Column(String, nullable=True)  # "low" | "medium" | "high" | "critical"
+    severity = Column(String, nullable=True)
     published_at = Column(DateTime, nullable=True)
     patched_at = Column(DateTime, nullable=True)
 
@@ -88,7 +91,8 @@ class Advisory(Base):
 
 
 class DependencyEdge(Base):
-    """Self-referencing edge table — package_id depends on depends_on_package_id."""
+    """Dependency relationship between two packages."""
+
     __tablename__ = "dependency_edges"
 
     id = Column(Integer, primary_key=True)
@@ -104,13 +108,73 @@ class DependencyEdge(Base):
     )
 
 
+class User(Base):
+    """Registered SupplyRisk users."""
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    hashed_password = Column(String, nullable=False)
+    is_active = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class Watchlist(Base):
-    """A team's tracked packages — advanced-scope feature, table included now
-    so the schema doesn't need breaking changes later."""
+    """Packages saved by individual users."""
 
     __tablename__ = "watchlists"
 
     id = Column(Integer, primary_key=True)
-    team_id = Column(Integer, nullable=False)
-    package_id = Column(Integer, ForeignKey("packages.id"), nullable=False)
+    team_id = Column(Integer, nullable=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    package_id = Column(
+        Integer,
+        ForeignKey("packages.id"),
+        nullable=False,
+    )
     added_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "package_id",
+            name="uq_watchlist_user_package",
+        ),
+    )
+
+
+class IngestionStatus(Base):
+    """Tracks ingestion results for each package and data source."""
+
+    __tablename__ = "ingestion_status"
+
+    id = Column(Integer, primary_key=True)
+    package_id = Column(
+        Integer,
+        ForeignKey("packages.id"),
+        nullable=False,
+    )
+    source = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="pending")
+    last_attempt_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+    last_success_at = Column(DateTime, nullable=True)
+    records_found = Column(Integer, nullable=False, default=0)
+    error_message = Column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "package_id",
+            "source",
+            name="uq_ingestion_package_source",
+        ),
+    )

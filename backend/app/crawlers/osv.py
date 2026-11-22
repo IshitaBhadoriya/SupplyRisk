@@ -1,10 +1,25 @@
+
 import httpx
+from datetime import datetime, timezone
 
 from app.database import SessionLocal
 from app.models import Package, Advisory
 
 
 OSV_API_URL = "https://api.osv.dev/v1/query"
+
+
+def parse_osv_datetime(value: str | None):
+    """Convert an OSV timestamp into a naive UTC datetime."""
+    if not value:
+        return None
+
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+    return parsed
 
 
 def query_osv(package_name: str, ecosystem: str) -> list[dict]:
@@ -66,7 +81,9 @@ def save_advisories(package_id: int, vulnerabilities: list[dict]) -> int:
         saved = 0
 
         for vulnerability in vulnerabilities:
-            published_at = vulnerability.get("published")
+            published_at = parse_osv_datetime(
+                vulnerability.get("published")
+            )
 
             advisory = Advisory(
                 package_id=package_id,
