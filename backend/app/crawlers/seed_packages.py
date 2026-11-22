@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from pathlib import Path
 
@@ -6,7 +7,7 @@ from app.crawlers.npm import crawl_npm_package
 from app.crawlers.pypi import crawl_pypi_package
 
 
-SEED_DATA_FILE = Path(__file__).with_name("seed_data.json")
+SEED_DATA_FILE = Path(__file__).with_name(os.getenv("SUPPLYRISK_SEED_FILE", "seed_data.json"))
 
 
 def load_seed_data() -> dict:

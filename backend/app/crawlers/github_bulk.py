@@ -1,12 +1,15 @@
 import json
+import os
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 LOG_DIR = Path("/app/logs")
 FAILED_REPOSITORIES_LOG = LOG_DIR / "github_failed_repositories.json"
-
+GITHUB_CRAWL_FRESHNESS_HOURS = int(
+    os.getenv("GITHUB_CRAWL_FRESHNESS_HOURS", "24")
+)
 
 def save_failed_repository(
     owner: str,
@@ -97,7 +100,20 @@ def crawl_repository(owner: str, repository: str, packages: list[Package]):
         f"Linked packages: "
         f"{len(packages)}"
     )
+    freshness_cutoff = datetime.now() - timedelta(
+    hours=GITHUB_CRAWL_FRESHNESS_HOURS
+    )
 
+    if packages and all(
+        package.last_crawled_at is not None
+        and package.last_crawled_at >= freshness_cutoff
+        for package in packages
+    ):
+        print(
+            f"[SKIP] Repository crawled within the last "
+            f"{GITHUB_CRAWL_FRESHNESS_HOURS} hours."
+        )
+        return
     commits = get_all_commits(
         owner,
         repository,
@@ -207,6 +223,12 @@ def bulk_github_ingestion() -> None:
 
             except Exception as exc:
                 retry_failed += 1
+
+                save_failed_repository(
+                    owner,
+                    repository,
+                    f"Retry failed: {exc}",
+                )
 
                 print(
                     f"[RETRY FAILED] "

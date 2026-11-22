@@ -40,7 +40,7 @@ def get_dependencies(registry: str, package_name: str) -> list[str]:
             #   "colorama ; sys_platform == 'win32'"
             # A naive split on ";" / "[" strips markers and extras but
             # leaves version specifiers (">=3.1") glued to the name for
-            # any requirement with no marker â€” which is most of them.
+            # any requirement with no marker GÇö which is most of them.
             # Requirement() parses this correctly per spec and gives us
             # just the distribution name.
             try:
@@ -50,7 +50,7 @@ def get_dependencies(registry: str, package_name: str) -> list[str]:
             dependencies.append(requirement.name)
         # PyPI lists the same dependency once per "extra" it's conditional
         # on (e.g. "nbformat", "nbformat ; extra == 'test'" both resolve
-        # to "nbformat") â€” dedupe here so callers get a clean list, though
+        # to "nbformat") GÇö dedupe here so callers get a clean list, though
         # save_dependency_edges() below no longer depends on this alone
         # to stay correct.
         return list(dict.fromkeys(dependencies))
@@ -98,7 +98,7 @@ def save_dependency_edges(
         # Tracks dependency IDs already handled in THIS call, in memory.
         # Needed because the session is created with autoflush=False, so
         # a db.add() earlier in this same loop is not visible to the
-        # "existing" query below until commit â€” without this set, the
+        # "existing" query below until commit GÇö without this set, the
         # same dependency resolved twice (e.g. two PyPI extras collapsing
         # to one name, or "Jinja2" vs "jinja2" resolving to the same row)
         # would be queued for insert twice and crash the whole batch's

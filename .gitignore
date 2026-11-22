@@ -21,3 +21,12 @@ dist/
 
 # Docker
 pgdata/
+
+# Local ingestion logs and helper scripts
+backend/logs/
+docker-compose.yml.backup
+expand_seed_data.py
+update_seed_config.py
+
+# Celery Beat runtime state
+backend/celerybeat-schedule
