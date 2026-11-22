@@ -17,11 +17,15 @@ app.include_router(packages.router)
 
 @app.get("/health", tags=["Health"])
 def health():
-    return {"status": "ok"}
+    """Quick check that the API itself is up."""
+    return {
+        "status": "ok"
+    }
 
 
 @app.get("/health/db", tags=["Health"])
 def health_db(db: Session = Depends(get_db)):
+    """Quick check that the API can reach PostgreSQL."""
     db.execute(text("SELECT 1"))
     return {
         "status": "ok",
