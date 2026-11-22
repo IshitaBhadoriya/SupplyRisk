@@ -60,6 +60,10 @@ def compute_score(stats: PackageRawStats) -> ScoreResult:
     is what the badge and dashboard are designed to show. Keep this
     inversion in mind if you ever compare your internal risk math to the
     number a user actually sees.
+
+    Phase 3: the returned breakdown now also includes a "data_completeness"
+    block (see its docstring note below) -- the score itself is completely
+    unchanged from Phase 1/2, this is purely additive.
     """
     bus_factor_risk, bus_factor_detail = bus_factor_score(
         stats.commit_counts_by_author
@@ -82,6 +86,35 @@ def compute_score(stats: PackageRawStats) -> ScoreResult:
     # Invert: risk 0 -> health score 100, risk 100 -> health score 0.
     health_score = round(100 - composite_risk)
     health_score = max(0, min(100, health_score))  # clamp, just in case
+
+    # Data-completeness: how many of the 4 signals had real underlying data
+    # to work from, vs. fell back to a "nothing to evaluate" default.
+    #
+    # Why this exists (Phase 3, found via full-scale testing): a package
+    # with zero crawled contributor data scores 0/100 -- maximum risk --
+    # the exact same number a genuinely abandoned, well-documented project
+    # would get. Before this field, those two cases were indistinguishable
+    # in the score alone. This doesn't change the score (the Phase 1/2
+    # formula and its weights stay exactly as tested and defended), it
+    # adds an honest label: "low confidence" means "don't trust this
+    # number as a real health assessment, we barely have any data," which
+    # is a materially different claim than "high confidence, this project
+    # really is this risky."
+    signal_has_data = {
+        "bus_factor": bus_factor_detail.get("has_data", True),
+        "contributor_churn": churn_detail.get("has_data", True),
+        "advisory_response": advisory_detail.get("has_data", True),
+        "release_cadence_decay": cadence_detail.get("has_data", True),
+    }
+    signals_with_data = sum(signal_has_data.values())
+    total_signals = len(signal_has_data)
+
+    if signals_with_data == total_signals:
+        confidence = "high"
+    elif signals_with_data >= total_signals / 2:
+        confidence = "medium"
+    else:
+        confidence = "low"
 
     breakdown = {
         "signals": {
@@ -107,6 +140,11 @@ def compute_score(stats: PackageRawStats) -> ScoreResult:
             },
         },
         "composite_risk": round(composite_risk, 2),
+        "data_completeness": {
+            "signals_with_data": signals_with_data,
+            "total_signals": total_signals,
+            "confidence": confidence,
+        },
     }
 
     return ScoreResult(

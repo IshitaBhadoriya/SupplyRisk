@@ -13,6 +13,18 @@ hand-written test fixture) -- this file itself doesn't need to change.
 Each function returns a tuple: (risk_score: float 0-100, detail: dict).
 The detail dict is what eventually powers the badge's "why this score"
 panel on the frontend, so keep it human-readable, not just raw numbers.
+
+Phase 3 addition: every detail dict now includes "has_data": bool,
+indicating whether this signal had real underlying data to compute from,
+or fell back to a "nothing to evaluate" default. This is what powers the
+data_completeness block in formula.py -- added after full-scale testing
+in Phase 1/2 surfaced real packages (SQLAlchemy, celery, tensorflow, and
+others, due to a GitHub-URL extraction gap in B's crawler) with zero
+crawled data at all. Without this flag, "no data" and "genuinely
+abandoned" were indistinguishable in the score -- both produced the same
+100-risk result. This doesn't change that score (deliberately -- the
+Phase 1/2 formula and its tests stay valid), it just adds an honest label
+alongside it.
 """
 
 from __future__ import annotations
@@ -34,7 +46,8 @@ def bus_factor_score(commit_counts_by_author: dict[str, int]) -> tuple[float, di
     Higher concentration in one person = higher risk.
 
     A project with zero commits is treated as maximum risk (nothing to
-    evaluate is not the same as healthy).
+    evaluate is not the same as healthy) -- but has_data=False flags that
+    this 100 came from an absence of data, not a measured concentration.
     """
     total_commits = sum(commit_counts_by_author.values())
 
@@ -43,6 +56,7 @@ def bus_factor_score(commit_counts_by_author: dict[str, int]) -> tuple[float, di
             "reason": "No commit history available",
             "top_contributor": None,
             "top_contributor_share_pct": None,
+            "has_data": False,
         }
 
     top_author, top_commits = max(
@@ -60,6 +74,7 @@ def bus_factor_score(commit_counts_by_author: dict[str, int]) -> tuple[float, di
         "top_contributor": top_author,
         "top_contributor_share_pct": round(top_share * 100, 1),
         "total_contributors": len(commit_counts_by_author),
+        "has_data": True,
     }
 
 
@@ -84,10 +99,16 @@ def contributor_churn_score(
         return 50.0, {
             "reason": "Not enough history to measure a trend yet",
             "data_points": len(window),
+            "has_data": False,
         }
 
     _, earliest_count = window[0]
     _, latest_count = window[-1]
+    # build_stats.py always produces CHURN_LOOKBACK_MONTHS entries even
+    # when a package has zero contributors (every count is just 0) --
+    # so "enough entries" alone doesn't mean "real signal." has_data
+    # additionally requires at least one non-zero count in the window.
+    any_real_activity = any(count > 0 for _, count in window)
 
     if earliest_count == 0:
         # Project already had no contributors at the start of the window --
@@ -104,6 +125,7 @@ def contributor_churn_score(
         "earliest_count": earliest_count,
         "latest_count": latest_count,
         "months_measured": len(window),
+        "has_data": any_real_activity,
     }
 
 
@@ -120,11 +142,17 @@ def advisory_response_score(
     Uses the single WORST (longest-open) advisory to drive the score --
     one severe, ignored vulnerability is disqualifying even if everything
     else about the project looks fine.
+
+    has_data is always True here, including when advisories is empty --
+    "we queried OSV and found nothing" is real information (unlike having
+    no contributor data at all), not a gap. See formula.py's
+    data_completeness docstring for why this matters.
     """
     if not advisories:
         return 0.0, {
             "reason": "No known security advisories on record",
             "advisory_count": 0,
+            "has_data": True,
         }
 
     today = date.today()
@@ -147,6 +175,7 @@ def advisory_response_score(
         "worst_days_open": worst_days_open,
         "advisory_count": len(advisories),
         "worst_advisory_index": worst_advisory_index,
+        "has_data": True,
     }
 
 
@@ -168,6 +197,7 @@ def release_cadence_decay_score(
             "reason": "No commit or release activity on record at all",
             "recent_count": 0,
             "previous_count": 0,
+            "has_data": False,
         }
 
     today = date.today()
@@ -195,6 +225,7 @@ def release_cadence_decay_score(
         "recent_count": recent_count,
         "previous_count": previous_count,
         "window_months": CADENCE_WINDOW_MONTHS,
+        "has_data": True,
     }
 
 
