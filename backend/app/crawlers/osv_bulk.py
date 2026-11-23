@@ -1,8 +1,14 @@
+
 import time
 
 from app.database import SessionLocal
 from app.models import Package
 from app.crawlers.osv import crawl_osv_package
+from app.services.ingestion_status import (
+    mark_running,
+    mark_success,
+    mark_failed,
+)
 
 
 def get_packages():
@@ -21,7 +27,7 @@ def get_packages():
 
 
 def bulk_osv_ingestion():
-    """Fetch OSV advisories for all npm and PyPI packages."""
+    """Fetch OSV advisories and track ingestion status per package."""
     packages = get_packages()
 
     total = len(packages)
@@ -30,10 +36,9 @@ def bulk_osv_ingestion():
     total_advisories = 0
 
     print("=" * 60)
-    print("SupplyRisk - Bulk OSV Ingestion")
+    print("SUPPLYRISK - BULK OSV INGESTION")
     print("=" * 60)
     print(f"Packages to process: {total}")
-    print()
 
     for index, package in enumerate(packages, start=1):
         print(
@@ -42,13 +47,22 @@ def bulk_osv_ingestion():
         )
 
         try:
+            mark_running(package.id, "osv")
+
             saved = crawl_osv_package(
                 package.registry,
                 package.name,
             )
 
+            mark_success(package.id, "osv", saved)
+
             successful += 1
             total_advisories += saved
+
+            print(
+                f"[SUCCESS] {package.registry}/{package.name}: "
+                f"{saved} advisories saved"
+            )
 
         except Exception as exc:
             failed += 1
@@ -56,6 +70,13 @@ def bulk_osv_ingestion():
             print(
                 f"[FAILED] {package.registry}/{package.name}: {exc}"
             )
+
+            try:
+                mark_failed(package.id, "osv", str(exc))
+            except Exception as status_error:
+                print(
+                    f"[STATUS UPDATE FAILED] {status_error}"
+                )
 
         print(
             f"Progress: {index}/{total} | "
@@ -65,13 +86,10 @@ def bulk_osv_ingestion():
         )
 
         print("-" * 60)
-
-        # Small delay to avoid sending requests too rapidly.
         time.sleep(0.2)
 
-    print()
-    print("=" * 60)
-    print("Bulk OSV Ingestion Complete")
+    print("\n" + "=" * 60)
+    print("BULK OSV INGESTION COMPLETE")
     print("=" * 60)
     print(f"Total packages: {total}")
     print(f"Successful: {successful}")

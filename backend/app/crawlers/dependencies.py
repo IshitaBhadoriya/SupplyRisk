@@ -1,211 +1,330 @@
+
 import httpx
+
+from urllib.parse import quote
 from packaging.requirements import Requirement, InvalidRequirement
+from packaging.utils import canonicalize_name
 
 from app.database import SessionLocal
 from app.models import Package, DependencyEdge
+
 
 NPM_API_URL = "https://registry.npmjs.org"
 PYPI_API_URL = "https://pypi.org/pypi"
 
 
-def get_dependencies(registry: str, package_name: str) -> list[str]:
-    """Fetch direct dependencies for one npm or PyPI package."""
-    if registry == "npm":
-        url = f"{NPM_API_URL}/{package_name}"
-        response = httpx.get(url, timeout=30.0)
-        response.raise_for_status()
-        data = response.json()
-        latest_version = data.get("dist-tags", {}).get("latest")
-        if not latest_version:
-            return []
-        version_data = data.get("versions", {}).get(
-            latest_version,
-            {},
-        )
-        dependencies = version_data.get("dependencies", {})
-        return list(dependencies.keys())
-    if registry == "pypi":
-        url = f"{PYPI_API_URL}/{package_name}/json"
-        response = httpx.get(url, timeout=30.0)
-        response.raise_for_status()
-        data = response.json()
-        requires_dist = (
-            data.get("info", {}).get("requires_dist") or []
-        )
-        dependencies = []
-        for requirement_string in requires_dist:
-            # PEP 508 requirement strings look like:
-            #   "Werkzeug>=3.1"
-            #   "asgiref>=3.2 ; extra == 'async'"
-            #   "colorama ; sys_platform == 'win32'"
-            # A naive split on ";" / "[" strips markers and extras but
-            # leaves version specifiers (">=3.1") glued to the name for
-            # any requirement with no marker GÇö which is most of them.
-            # Requirement() parses this correctly per spec and gives us
-            # just the distribution name.
-            try:
-                requirement = Requirement(requirement_string)
-            except InvalidRequirement:
-                continue
-            dependencies.append(requirement.name)
-        # PyPI lists the same dependency once per "extra" it's conditional
-        # on (e.g. "nbformat", "nbformat ; extra == 'test'" both resolve
-        # to "nbformat") GÇö dedupe here so callers get a clean list, though
-        # save_dependency_edges() below no longer depends on this alone
-        # to stay correct.
-        return list(dict.fromkeys(dependencies))
-    raise ValueError(f"Unsupported registry: {registry}")
-
-
 def normalize_package_name(registry: str, name: str) -> str:
     """Normalize package names for database matching."""
+
     name = name.strip()
+
     if registry == "pypi":
-        return name.lower().replace("_", "-").replace(".", "-")
+        return str(canonicalize_name(name))
+
     return name.lower()
 
 
-def find_package(db, registry: str, name: str):
-    """Find an existing package using normalized package names."""
-    normalized_name = normalize_package_name(registry, name)
+def get_dependencies(registry: str, package_name: str) -> list[str]:
+    """Fetch direct dependencies for npm or PyPI packages."""
+
+    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+
+        if registry == "npm":
+
+            # Encode scoped package names correctly.
+            # Example: @jest/react-is -> @jest%2Freact-is
+            encoded_name = quote(package_name, safe="@")
+
+            url = f"{NPM_API_URL}/{encoded_name}"
+
+            response = client.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+
+            latest_version = (
+                data.get("dist-tags", {}).get("latest")
+            )
+
+            if not latest_version:
+                return []
+
+            version_data = (
+                data.get("versions", {}).get(latest_version, {})
+            )
+
+            dependencies = (
+                version_data.get("dependencies") or {}
+            )
+
+            return list(dependencies.keys())
+
+        elif registry == "pypi":
+
+            url = f"{PYPI_API_URL}/{quote(package_name, safe='')}/json"
+
+            response = client.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+
+            requires_dist = (
+                data.get("info", {}).get("requires_dist") or []
+            )
+
+            dependencies = []
+
+            for requirement_string in requires_dist:
+
+                try:
+                    requirement = Requirement(requirement_string)
+
+                except InvalidRequirement:
+                    continue
+
+                # Exclude optional extras and evaluate
+                # environment markers for this environment.
+                if requirement.marker is not None:
+                    if not requirement.marker.evaluate():
+                        continue
+
+                dependencies.append(requirement.name)
+
+            return list(dict.fromkeys(dependencies))
+
+        else:
+            raise ValueError(
+                f"Unsupported registry: {registry}"
+            )
+
+
+def build_package_lookup(db, registry: str) -> dict:
+    """Build a normalized package lookup map."""
+
     packages = (
         db.query(Package)
         .filter(Package.registry == registry)
         .all()
     )
+
+    lookup = {}
+
     for package in packages:
-        if normalize_package_name(registry, package.name) == normalized_name:
-            return package
-    return None
+
+        normalized_name = normalize_package_name(
+            registry,
+            package.name
+        )
+
+        lookup[normalized_name] = package
+
+    return lookup
+
+
+def find_package(
+    package_lookup: dict,
+    registry: str,
+    name: str
+):
+    """Find an existing package using normalized names."""
+
+    normalized_name = normalize_package_name(
+        registry,
+        name
+    )
+
+    return package_lookup.get(normalized_name)
 
 
 def save_dependency_edges(
     package_id: int,
     dependency_names: list[str],
-    registry: str,
-) -> int:
-    """Save dependency relationships that exist in the database."""
-    db = SessionLocal()
-    try:
-        package = db.query(Package).filter(
-            Package.id == package_id
-        ).first()
-        if package is None:
-            raise ValueError(f"Package ID not found: {package_id}")
+    registry: str
+) -> dict:
+    """
+    Discover missing packages and synchronize dependency edges.
 
-        saved = 0
-        skipped = 0
-        # Tracks dependency IDs already handled in THIS call, in memory.
-        # Needed because the session is created with autoflush=False, so
-        # a db.add() earlier in this same loop is not visible to the
-        # "existing" query below until commit GÇö without this set, the
-        # same dependency resolved twice (e.g. two PyPI extras collapsing
-        # to one name, or "Jinja2" vs "jinja2" resolving to the same row)
-        # would be queued for insert twice and crash the whole batch's
-        # commit, rolling back every real edge for this package along
-        # with it.
-        seen_dependency_ids: set[int] = set()
+    Existing edges are replaced only after dependency fetching
+    has completed successfully.
+    """
+
+    db = SessionLocal()
+
+    try:
+
+        package = (
+            db.query(Package)
+            .filter(Package.id == package_id)
+            .first()
+        )
+
+        if package is None:
+            raise ValueError(
+                f"Package ID not found: {package_id}"
+            )
+
+        package_lookup = build_package_lookup(
+            db,
+            registry
+        )
+
+        dependency_ids = set()
+        discovered = 0
+
+        parent_name = normalize_package_name(
+            registry,
+            package.name
+        )
 
         for dependency_name in dependency_names:
-            dependency = find_package(
-                db,
+
+            normalized_name = normalize_package_name(
                 registry,
-                dependency_name,
+                dependency_name
             )
+
+            # Prevent self-dependencies.
+            if normalized_name == parent_name:
+                continue
+
+            dependency = package_lookup.get(normalized_name)
+
+            # Automatically discover missing packages.
             if dependency is None:
-                skipped += 1
-                continue
-            if dependency.id == package_id:
-                skipped += 1
-                continue
-            if dependency.id in seen_dependency_ids:
-                skipped += 1
-                continue
 
-            existing = (
-                db.query(DependencyEdge)
-                .filter(
-                    DependencyEdge.package_id == package_id,
-                    DependencyEdge.depends_on_package_id == dependency.id,
+                dependency = Package(
+                    registry=registry,
+                    name=dependency_name
                 )
-                .first()
-            )
-            seen_dependency_ids.add(dependency.id)
-            if existing:
-                skipped += 1
-                continue
 
-            edge = DependencyEdge(
-                package_id=package_id,
-                depends_on_package_id=dependency.id,
+                db.add(dependency)
+                db.flush()
+
+                package_lookup[normalized_name] = dependency
+
+                discovered += 1
+
+            dependency_ids.add(dependency.id)
+
+        # Remove old edges only after successful fetching
+        # and package resolution.
+        (
+            db.query(DependencyEdge)
+            .filter(
+                DependencyEdge.package_id == package_id
             )
-            db.add(edge)
-            saved += 1
+            .delete(synchronize_session=False)
+        )
+
+        # Insert current dependency relationships.
+        for dependency_id in dependency_ids:
+
+            db.add(
+                DependencyEdge(
+                    package_id=package_id,
+                    depends_on_package_id=dependency_id
+                )
+            )
 
         db.commit()
-        return saved
+
+        result = {
+            "dependencies_found": len(dependency_names),
+            "edges_saved": len(dependency_ids),
+            "packages_discovered": discovered
+        }
+
+        print(
+            f"[DEPENDENCY] Package ID {package_id}: "
+            f"{result['dependencies_found']} dependencies found, "
+            f"{result['edges_saved']} edges saved, "
+            f"{result['packages_discovered']} packages discovered"
+        )
+
+        return result
+
     except Exception:
         db.rollback()
         raise
+
     finally:
         db.close()
 
 
-def crawl_dependencies(package: Package) -> int:
-    """Fetch and store direct dependencies for one package."""
+def crawl_dependencies(package: Package) -> dict:
+    """Fetch dependencies and save their database relationships."""
+
+    # Fetch before changing database records.
     dependencies = get_dependencies(
         package.registry,
-        package.name,
+        package.name
     )
-    saved = save_dependency_edges(
+
+    result = save_dependency_edges(
         package.id,
         dependencies,
-        package.registry,
+        package.registry
     )
-    print(
-        f"[DEPENDENCY] {package.registry}/{package.name}: "
-        f"{len(dependencies)} dependencies found, "
-        f"{saved} edges saved"
-    )
-    return saved
+
+    return result
 
 
 if __name__ == "__main__":
     import sys
 
     if len(sys.argv) != 3:
+
         print(
             "Usage: python -m app.crawlers.dependencies "
             "<registry> <package>"
         )
+
         raise SystemExit(1)
 
     registry = sys.argv[1]
     package_name = sys.argv[2]
 
     db = SessionLocal()
+
     try:
+
         package = (
             db.query(Package)
             .filter(
                 Package.registry == registry,
-                Package.name == package_name,
+                Package.name == package_name
             )
             .first()
         )
+
         if package is None:
             raise ValueError(
                 f"Package not found: {registry}/{package_name}"
             )
+
         package_id = package.id
+
     finally:
         db.close()
 
     db = SessionLocal()
+
     try:
-        package = db.query(Package).filter(
-            Package.id == package_id
-        ).first()
-        crawl_dependencies(package)
+
+        package = (
+            db.query(Package)
+            .filter(Package.id == package_id)
+            .first()
+        )
+
+        if package is None:
+            raise ValueError(
+                f"Package ID not found: {package_id}"
+            )
+
+        result = crawl_dependencies(package)
+
+        print("Ingestion result:", result)
+
     finally:
         db.close()
