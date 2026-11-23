@@ -17,11 +17,20 @@ dist/
 
 pgdata/
 
+<<<<<<< HEAD
+# Local ingestion logs and helper scripts
+=======
+>>>>>>> person-c-test
 backend/logs/
 docker-compose.yml.backup
 expand_seed_data.py
 update_seed_config.py
 
+<<<<<<< HEAD
+# Celery Beat runtime state
+backend/celerybeat-schedule
+=======
 backend/celerybeat-schedule
 
 ingestion-log.txt
+>>>>>>> person-c-test

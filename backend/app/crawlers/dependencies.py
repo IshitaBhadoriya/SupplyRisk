@@ -12,7 +12,6 @@ from app.models import Package, DependencyEdge
 NPM_API_URL = "https://registry.npmjs.org"
 PYPI_API_URL = "https://pypi.org/pypi"
 
-
 def normalize_package_name(registry: str, name: str) -> str:
     """Normalize package names for database matching."""
 
@@ -246,85 +245,6 @@ def save_dependency_edges(
     except Exception:
         db.rollback()
         raise
-
-    finally:
-        db.close()
-
-
-def crawl_dependencies(package: Package) -> dict:
-    """Fetch dependencies and save their database relationships."""
-
-    # Fetch before changing database records.
-    dependencies = get_dependencies(
-        package.registry,
-        package.name
-    )
-
-    result = save_dependency_edges(
-        package.id,
-        dependencies,
-        package.registry
-    )
-
-    return result
-
-
-if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) != 3:
-
-        print(
-            "Usage: python -m app.crawlers.dependencies "
-            "<registry> <package>"
-        )
-
-        raise SystemExit(1)
-
-    registry = sys.argv[1]
-    package_name = sys.argv[2]
-
-    db = SessionLocal()
-
-    try:
-
-        package = (
-            db.query(Package)
-            .filter(
-                Package.registry == registry,
-                Package.name == package_name
-            )
-            .first()
-        )
-
-        if package is None:
-            raise ValueError(
-                f"Package not found: {registry}/{package_name}"
-            )
-
-        package_id = package.id
-
-    finally:
-        db.close()
-
-    db = SessionLocal()
-
-    try:
-
-        package = (
-            db.query(Package)
-            .filter(Package.id == package_id)
-            .first()
-        )
-
-        if package is None:
-            raise ValueError(
-                f"Package ID not found: {package_id}"
-            )
-
-        result = crawl_dependencies(package)
-
-        print("Ingestion result:", result)
 
     finally:
         db.close()

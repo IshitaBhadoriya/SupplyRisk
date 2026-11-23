@@ -1,8 +1,9 @@
 
 import json
+import os
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.crawlers.github import (
@@ -23,7 +24,9 @@ from app.services.ingestion_status import (
 
 LOG_DIR = Path("/app/logs")
 FAILED_REPOSITORIES_LOG = LOG_DIR / "github_failed_repositories.json"
-
+GITHUB_CRAWL_FRESHNESS_HOURS = int(
+    os.getenv("GITHUB_CRAWL_FRESHNESS_HOURS", "24")
+)
 
 def save_failed_repository(
     owner: str,
@@ -167,14 +170,19 @@ def crawl_repository(
     print("\n" + "-" * 60)
     print(f"Repository: {owner}/{repository}")
     print(f"Linked packages: {len(packages)}")
-    freshness_cutoff = datetime.now() - timedelta(hours=GITHUB_CRAWL_FRESHNESS_HOURS)
+    freshness_cutoff = datetime.now() - timedelta(
+        hours=GITHUB_CRAWL_FRESHNESS_HOURS
+    )
 
     if packages and all(
         package.last_crawled_at is not None
         and package.last_crawled_at >= freshness_cutoff
         for package in packages
     ):
-        print(f"[SKIP] Repository crawled within the last {GITHUB_CRAWL_FRESHNESS_HOURS} hours.")
+        print(
+            f"[SKIP] Repository crawled within the last "
+            f"{GITHUB_CRAWL_FRESHNESS_HOURS} hours."
+        )
         return 0
     commits = get_all_commits(
         owner,
